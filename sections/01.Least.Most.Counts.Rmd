@@ -1,0 +1,244 @@
+---
+title: "00.Least.Most.Counts"
+author: "Alene Onion"
+date: "October 15, 2018"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+---
+
+This portion of the script uses the SBU file produced by the previous script to produce a file with "sample_id","coll_date","bap","WAVE" where "WAVE" is the name of the WAVE bug, most or least wanted  
+
+It then distills this to a count of the number of Most or Least Wanted WAVE bugs per sample using library(plyr)
+```{r, echo=FALSE}
+#Pull bug names from the table
+Least = read.csv("data/Least.csv")
+Most = read.csv("data/Most.csv")
+#convert the names to characters
+Least$Family <- as.character(Least$Family)
+Least$GENSPECIES <- as.character(Least$GENSPECIES)
+Most$Family <- as.character(Most$Family)
+Most$GENSPECIES <- as.character(Most$GENSPECIES)
+#capitalize the genspecies columns
+Most$GENSPECIES<-toupper(Most$GENSPECIES)
+Least$GENSPECIES<-toupper(Least$GENSPECIES)
+
+
+#Create a file with the Least Wanted Organisms Named
+nbugs = length(Least$GENSPECIES)
+m=0
+
+for (i in 1:nbugs){
+  #Create selection criteria specific to the given parameter
+  bugs = SBU$genspecies == Least$GENSPECIES[i]
+  #Pare data to specific parameter
+  SBUm <- SBU[bugs,]
+  #Capture the name WAVE bug
+  name = Least$Family[i]
+  #add the name to the WAVE column
+  SBUm$WAVE <- rep(name,nrow(SBUm))
+  #merge this with previous pulls
+  if (m>0){
+    SBUSubset1 <- merge(SBUSubset1,SBUm, all=TRUE)
+  }
+  else {
+    SBUSubset1 <- SBUm
+    m = 1
+  }
+  rm(list = c('bugs','SBUm','name'))
+}
+rm(list = c('nbugs','m','i','Least'))
+
+#Create a file with the Most Wanted Organisms Named
+nbugs = length(Most$GENSPECIES)
+m=0
+
+for (i in 1:nbugs){
+  #Create selection criteria specific to the given parameter
+  bugs = SBU$genspecies == Most$GENSPECIES[i]
+  #Pare data to specific parameter
+  SBUm <- SBU[bugs,]
+  #Capture the name WAVE bug
+  name = Most$Family[i]
+  #add the name to the WAVE column
+  SBUm$WAVE <- rep(name,nrow(SBUm))
+  #merge this with previous pulls
+  if (m>0){
+    SBUSubset2 <- merge(SBUSubset2,SBUm, all=TRUE)
+  }
+  else {
+    SBUSubset2 <- SBUm
+    m = 1
+  }
+  rm(list = c('bugs','SBUm','name'))
+}
+rm(list = c('nbugs','m','i','Most'))
+
+#Produces a file with no duplicate WAVE families per sample. This is necessary because there may be more than one species of a given family in the sample
+LeastSubset <- unique(SBUSubset1[c("sample_id","coll_date","bap","WAVE")])
+MostSubset <- unique(SBUSubset2[c("sample_id","coll_date","bap","WAVE")])
+rm(list = c('SBUSubset1','SBUSubset2'))
+#Produces a file with a count of WAVE least wanted families per sample
+LeastCount <- count(LeastSubset[c("sample_id","coll_date","bap")])
+MostCount <- count(MostSubset[c("sample_id","coll_date","bap")])
+rm(list = c('LeastSubset','MostSubset'))
+```
+
+Produce one file with all the sites, the least count, and the most count and plot these data
+```{r, echo=FALSE}
+#Create file with only sample ID, date, and BAP -> meaning only one record per sample
+SBUprint <- count(SBU[c("sample_id","coll_date","bap")])
+#remove the freq from this file
+keep1 <- c("sample_id","coll_date","bap")
+SBUprint <- SBUprint[keep1]
+rm(keep1)
+
+#Rename the freq column in the LeastCount and MostCount tables to LeastNumber and MostNumber
+LeastCount <- rename(LeastCount,c("freq"="LeastNumber"))
+MostCount <- rename(MostCount,c("freq"="MostNumber"))
+
+#Merge the datasets without deleting non-overlapping data (using all=TRUE)
+Combined <- merge(SBUprint,LeastCount,by=c("sample_id","coll_date","bap"), all=TRUE)
+Combined <- merge(Combined,MostCount,by=c("sample_id","coll_date","bap"), all=TRUE)
+rm(list = c('LeastCount','MostCount','SBUprint'))
+
+#round the BAP scores to the nearest 0.5 while keeping the original file to print later
+Rounded <- Combined
+Rounded[,"bap"]= round(Rounded[,"bap"]/.5)*.5
+
+#create data sets where MostNumber is >5,>6,>7,>8,>9,>10 OR the LeastNumber is >3,>4,>5
+#Create bap score counts for each subset
+AllPlot <- count(Rounded[c("bap")])
+Most5Plot <- count((subset(Rounded,MostNumber>=5))[c("bap")])
+Most6Plot <- count((subset(Rounded,MostNumber>=6))[c("bap")])
+Most7Plot <- count((subset(Rounded,MostNumber>=7))[c("bap")])
+Most8Plot <- count((subset(Rounded,MostNumber>=8))[c("bap")])
+Most9Plot <- count((subset(Rounded,MostNumber>=9))[c("bap")])
+Most10Plot <- count((subset(Rounded,MostNumber>=10))[c("bap")])
+Least3Plot <- count((subset(Rounded,LeastNumber>=3))[c("bap")])
+Least4Plot <- count((subset(Rounded,LeastNumber>=4))[c("bap")])
+Least5Plot <- count((subset(Rounded,LeastNumber>=5))[c("bap")])
+
+#create one plot to rule them all with vertical lines for the impact categories
+plot(AllPlot$bap,AllPlot$freq,type="l",lwd=4,xlab="BAP Score",ylab="Number of Sites")
+lines(Most6Plot$bap,Most6Plot$freq,lwd=4,col="dodgerblue1",type="l")
+lines(Most7Plot$bap,Most7Plot$freq,lwd=4,col="dodgerblue2",type="l")
+lines(Most8Plot$bap,Most8Plot$freq,lwd=4,col="dodgerblue3",type="l")
+lines(Most9Plot$bap,Most9Plot$freq,lwd=4,col="dodgerblue4",type="l")
+lines(Most10Plot$bap,Most10Plot$freq,lwd=4,col="deepskyblue4",type="l")
+lines(Least3Plot$bap,Least3Plot$freq,lwd=4,col="firebrick3",type="l")
+lines(Least4Plot$bap,Least4Plot$freq,lwd=4,col="firebrick2",type="l")
+lines(Least5Plot$bap,Least5Plot$freq,lwd=4,col="firebrick1",type="l")
+abline(v=7.5)
+abline(v=5)
+abline(v=2.5)
+legend("topleft",lty=1,legend=c("All Sites",">5 to >10 Most",">3 to >5 Least"),lwd=c(2,2,2),col=c("black","dodgerblue","firebrick1"))
+#rm(list = c('AllPlot','Most5Plot','Most6Plot','Most7Plot','Most8Plot','Most9Plot','Most10Plot','Least5Plot','Least4Plot','Least3Plot','Rounded'))
+```
+
+###Summary Table
+
+PN	The % of all the nonimpacted samples with a probability > the Cutoff   
+EN	The % of all the impaired or slight samples inaccurately identified as nonimpacted by this method   
+ENI	The % of all the impaired samples (allowing errors in slight) inaccurately identified as nonimpacted   
+PI	The % of all the impaired samples captured with a probability > the Cutoff   
+EI	The % of samples identified as impaired that are actually nonimpacted or slight     
+CutOff  The sample is restricted to only records with most or least wanteds of this value  
+```{r, echo=FALSE}
+#first replace all NA values with 0
+Combined[is.na(Combined)]=0
+
+#3 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>3,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>3,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>3,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>3,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>3,]))/(nrow(Combined[Combined$LeastNumber>3,])),2))*100
+CutOff<-"3"
+summary = data.frame(CutOff,PN,EN,ENI,PI,EI)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff'))
+
+#4 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>4,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>4,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>4,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>4,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>4,]))/(nrow(Combined[Combined$LeastNumber>4,])),2))*100
+CutOff<-"4"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#5 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>5,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>5,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>5,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>5,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>5,]))/(nrow(Combined[Combined$LeastNumber>5,])),2))*100
+CutOff<-"5"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#6 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>6,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>6,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>6,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>6,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>6,]))/(nrow(Combined[Combined$LeastNumber>6,])),2))*100
+CutOff<-"6"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#7 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>7,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>7,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>7,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>7,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>7,]))/(nrow(Combined[Combined$LeastNumber>7,])),2))*100
+CutOff<-"7"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#8 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>8,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>8,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>8,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>8,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>8,]))/(nrow(Combined[Combined$LeastNumber>8,])),2))*100
+CutOff<-"8"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#9 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>9,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>9,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>9,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>9,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>9,]))/(nrow(Combined[Combined$LeastNumber>9,])),2))*100
+CutOff<-"9"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#10 most or least wanted
+PN<-(signif((nrow(Combined[Combined$bap>=7.5&Combined$MostNumber>10,]))/(nrow(Combined[Combined$bap>=7.5,])),2))*100
+EN<-(signif((nrow(Combined[Combined$bap<7.5&Combined$MostNumber>10,]))/(nrow(Combined[Combined$bap<7.5,])),2))*100
+ENI<-(signif((nrow(Combined[Combined$bap<5&Combined$MostNumber>10,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+PI<-(signif((nrow(Combined[Combined$bap<5&Combined$LeastNumber>10,]))/(nrow(Combined[Combined$bap<5,])),2))*100
+EI<-(signif((nrow(Combined[Combined$bap>=5&Combined$LeastNumber>10,]))/(nrow(Combined[Combined$LeastNumber>10,])),2))*100
+CutOff<-"10"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','PI','ENI','EI','CutOff','junk'))
+
+#print the table
+kable(summary) %>%
+  kable_styling(c("striped", "bordered")) %>%
+    add_header_above(c(" ", "Most Wanteds" = 3, "Least Wanteds" = 2))
+```

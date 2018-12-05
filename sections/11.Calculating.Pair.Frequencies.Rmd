@@ -1,0 +1,120 @@
+---
+title: "Untitled"
+author: "Alene Onion"
+date: "October 18, 2018"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+---
+
+```{r, echo=FALSE}
+#Pull bug names from the table
+WAVE <- read.csv("data/All.WAVE.Families.csv")
+#convert the names to characters
+WAVE$Family <- as.character(WAVE$Family)
+WAVE$GENSPECIES <- as.character(WAVE$GENSPECIES)
+names(WAVE)[names(WAVE)=="GENSPECIES"]<- "genspecies"
+WAVE$genspecies<-toupper(WAVE$genspecies)
+
+#Create a file with the WAVE Organisms Named
+#this will remove organisms that aren't on the WAVE Families list
+SBU1 <- merge(SBU,WAVE,by=c("genspecies"))
+#remove WAVE column
+keep <- c("sample_id","coll_date","bap","genspecies","Family")
+SBU1 <- SBU1[keep]
+rm(keep)
+#rename Family column WAVE column
+names(SBU1)[names(SBU1)=="Family"]<-"WAVE"
+#Convert the family names to characters
+SBU1$WAVE <- as.character(SBU1$WAVE)
+#Produces a SBU1 file with no duplicate WAVE families per sample. This is necessary because there may be more than one species of a given family in the sample
+SBU1 <- unique(SBU1[c("sample_id","coll_date","bap","WAVE")])
+rm(WAVE)
+
+#Create a file frequencies for each wave family combo
+bugs <- unique(WAVE$Family)
+nbugs = length(bugs)
+nbugstop = nbugs-1
+
+#create table to put these into
+table = data.frame(Family1=NA,Family2=NA,Total=NA,Low=NA,Slight=NA,High=NA)
+
+for (m in 1:nbugstop){
+  #Create selection criteria specific to the given parameter
+  b1 = SBU1$WAVE == bugs[m]
+  #Pare data to specific parameter
+  SBU1 <- SBU1[b1,]
+  n=m+1
+  
+  for (p in n:nbugs){
+    #Create selection criteria specific to the given parameter
+    b2 = SBU1$WAVE == bugs[p]
+    #Pare data to specific parameter
+    SBU2 <- SBU1[b2,]
+    #merge these together and only keep overlapping samples
+    SBU4 <- merge(SBU1,SBU2,by=c("sample_id","coll_date","bap"), all=FALSE)
+    #truncate this file into High,Slith,Low, and NKI
+    h1 = SBU4$bap >= 7.5
+    SBUHigh <- SBU4[h1,]
+    S1 = SBU4$bap >= 5
+    SBUSlight <- SBU4[S1,]
+    S1 = SBUSlight$bap < 7.5
+    SBUSlight <- SBUSlight[S1,]
+    L1 = SBU4$bap <5
+    SBULow <- SBU4[L1,]
+    #count the frequencies
+    FreqAll <- nrow(SBU4)
+    FreqLow <- nrow(SBULow)
+    FreqSli <- nrow(SBUSlight)
+    FreqHigh <- nrow(SBUHigh)
+    temp = data.frame(Family1=(bugs[m]),Family2=(bugs[p]),Total=FreqAll,Low=FreqLow,Slight=FreqSli,High=FreqHigh)
+    table <- merge(table,temp,all=TRUE)
+    rm(b2)
+    rm(SBU2)
+    rm(SBU4)
+    rm(h1)
+    rm(SBUHigh)
+    rm(S1)
+    rm(SBUSlight)
+    rm(L1)
+    rm(SBULow)
+    rm(FreqAll)
+    rm(FreqLow)
+    rm(FreqSli)
+    rm(FreqHigh)
+    rm(temp)
+  }
+  rm(b1)
+  rm(SBU1)
+  }
+
+#Truncate SBU file to BAP>=7.5
+highSBU = SBUshort$bap >= 7.5
+SBUH <- SBUshort[highSBU,]
+
+#Truncate SBU file to (>7.5 BAP >=5)
+sSBU = SBUshort$bap >= 5
+SBUSl <- SBUshort[sSBU,]
+sSBU = SBUSl$bap < 7.5
+SBUSl <- SBUSl[sSBU,]
+
+#Truncate WAVE and SBU file to BAP<5
+lowSBU = SBUshort$bap < 5
+SBUlow <- SBUshort[lowSBU,]
+
+#Truncate WAVE and SBU file to BAP>=5
+medSBU = SBUshort$bap >= 5
+SBUNKI <- SBUshort[medSBU,]
+
+#Get total possible records for the Total row
+allSBU <- nrow(SBUshort)
+LSBU <- nrow(SBUlow)
+SSBU <- nrow(SBUSl)
+HSBU <- nrow(SBUH)
+
+#Add a total row
+TOTAL = data.frame(Family1="total",Family2="total",Total=allSBU,Low=LSBU,Slight=SSBU,High=HSBU)
+Combined <- merge(TOTAL,table,all=TRUE)
+```

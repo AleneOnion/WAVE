@@ -1,0 +1,727 @@
+---
+title: "10.Calculating.Baes.Probability"
+author: "Alene Onion"
+date: "October 15, 2018"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+---
+
+###Description of the Calculations  
+This set of scripts calculates the probability that each wave sample is from a non-impacted, slightly impacted, or impaired stream. The logic it follows is:
+
+1. Create probability tables for each WAVE family:  
+For example, to calculate the probability that a sample is from a Non-impacted stream AND contains a Perlidae stonefly, I count the number of non-impacted stream samples that contain Perlidae stoneflies and divide by the total number of non-impacted stream samples  
+DO the same for slightly impacted, and impaired impact levels
+
+2. Merge this table with the samples table so we have a list of probabilities for all the families found in each of the samples as well as the BAP score and corresponding impairment category ("impact"). For example:  
+```{r, echo=FALSE}
+B= matrix( c('sample_id','1-BEAM-0.1','1-BELS-2.7','1-BERG-1.3','1-BEVC-1.1',
+             'coll_date','2005-09-14','2010-09-01','2000-09-12','2005-09-13',
+             'bap','7.83','7.77','3.70','6.58',
+             'impact','1.High','1.High','3.Low','2.Slight',
+             '1.High','0.9216019201','0.9766148715','0.0032235331','0.8232682623',
+             '2.Slight','0.078397242','0.023384802','0.060606262','0.176445056',
+             '3.Low','8.376511e-07','3.268343e-07','9.361702e-01','2.866813e-04'),nrow=5,ncol=7)
+#print the table
+kable(B) %>%
+  kable_styling(c("striped", "bordered")) 
+rm(B)
+```
+
+3. Calculate the probability that a given sample is from a non-impacted, slight, or impaired stream:  
+In this step, calculate the probability for each sample using the naive Bayes equation. For example, to calculate that a sample is from a non-impacted streams:  
+#prod(NonImpacted probs)/(prod(NonImpacted probs)+prod(Slight probs)+prod(Impaired probs))
+In other words, multiply together the Non-Impacted, Slight, and Impaired probabilities for each family found in this sample and then divide the Non-Impacted product by the sum of these three products
+
+###All WAVE Families  
+Perform the above calculation for All the families on the WAVE list  
+```{r, echo=FALSE}
+#Pull bug names from the table
+WAVE <- read.csv("data/All.WAVE.Families.csv")
+#convert the names to characters
+WAVE$Family <- as.character(WAVE$Family)
+WAVE$GENSPECIES <- as.character(WAVE$GENSPECIES)
+names(WAVE)[names(WAVE)=="GENSPECIES"]<- "genspecies"
+WAVE$genspecies<-toupper(WAVE$genspecies)
+
+#Create a file with the WAVE Organisms Named
+#this will remove organisms that aren't on the WAVE Families list
+SBU1 <- merge(SBU,WAVE,by=c("genspecies"))
+#remove WAVE column
+keep <- c("sample_id","coll_date","bap","genspecies","Family")
+SBU1 <- SBU1[keep]
+rm(keep)
+#rename Family column WAVE column
+names(SBU1)[names(SBU1)=="Family"]<-"WAVE"
+#Convert the family names to characters
+SBU1$WAVE <- as.character(SBU1$WAVE)
+#Produces a SBU1 file with no duplicate WAVE families per sample. This is necessary because there may be more than one species of a given family in the sample
+SBU1 <- unique(SBU1[c("sample_id","coll_date","bap","WAVE")])
+rm(WAVE)
+
+#Create impact column
+SBU1$impact <- "0"
+SBU1$impact <- ifelse(SBU1$bap<5,"3.Low",SBU1$impact)
+SBU1$impact <- ifelse(SBU1$bap>=7.5,"1.High",SBU1$impact)
+SBU1$impact <- ifelse(SBU1$impact==0,"2.Slight",SBU1$impact)
+
+#Create WAVE.Family Frequencies
+#first count the frequency of each combination
+SBUFreq <- count(SBU1[c("WAVE","impact")])
+#now restructure the table
+SBUFreq<-melt(SBUFreq,id=c("WAVE","impact"))
+SBUFreq <- cast(SBUFreq,WAVE~impact,sum)
+
+#Get total values for each impact
+junk <- unique(SBU1[c("sample_id","coll_date","impact")])
+total <- count(junk,c("impact"))
+rm(junk)
+high <- total$freq[1]
+slight <- total$freq[2]
+low <- total$freq[3]
+rm(total)
+
+#Create probability tables
+SBUProb <- SBUFreq
+SBUProb$`1.High` <- SBUFreq$`1.High`/high
+SBUProb$`2.Slight` <- SBUFreq$`2.Slight`/slight
+SBUProb$`3.Low` <- SBUFreq$`3.Low`/low
+#convert NA values to 0
+SBUProb[is.na(SBUProb)]<- 0
+rm(list = c('high','low','slight'))
+
+#merge the SBU and SBUProb tables
+SBU1 <- merge(SBU1,SBUProb,by=c("WAVE"))
+rm(list = c('SBUProb','SBUFreq'))
+
+#Confirm that there's only one sample per site
+junk1 <- unique(SBU1[c("sample_id")])
+junk2 <- unique(SBU1[c("sample_id","coll_date")])
+"these values should be the same. If not, then there are more than one sample per site"
+nrow(junk1)
+nrow(junk2)
+rm(list = c('junk1','junk2'))
+
+#calculate the prob of high, slight, low for each sample 
+#find out how many samples I have to run
+samples = unique(SBU1$sample_id)
+nsamples <- length(samples)
+
+#for the first sample
+sample = SBU1$sample_id==samples[1]
+SBUsample <- SBU1[sample,]
+SBUsample$`1.High`<- prod(SBUsample$`1.High`)
+SBUsample$`2.Slight`<- prod(SBUsample$`2.Slight`)
+SBUsample$`3.Low`<- prod(SBUsample$`3.Low`)
+SBUsample <- unique(SBUsample[c("sample_id","coll_date","bap","impact","1.High","2.Slight","3.Low")])
+highT <- SBUsample$`1.High`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+slightT <- SBUsample$`2.Slight`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+lowT <- SBUsample$`3.Low`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+SBUsample$`1.High`<- highT
+SBUsample$`2.Slight`<- slightT
+SBUsample$`3.Low`<- lowT
+ProbSamp <- SBUsample
+rm(list = c('SBUsample','sample','highT','slightT','lowT'))
+
+
+#and now for all subsequent samples
+for(i in 2:nsamples){
+  sample = SBU1$sample_id==samples[i]
+  SBUsample <- SBU1[sample,]
+  SBUsample$`1.High`<- prod(SBUsample$`1.High`)
+  SBUsample$`2.Slight`<- prod(SBUsample$`2.Slight`)
+  SBUsample$`3.Low`<- prod(SBUsample$`3.Low`)
+  SBUsample <- unique(SBUsample[c("sample_id","coll_date","bap","impact","1.High","2.Slight","3.Low")])
+  highT <- SBUsample$`1.High`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  slightT <- SBUsample$`2.Slight`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  lowT <- SBUsample$`3.Low`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  SBUsample$`1.High`<- highT
+  SBUsample$`2.Slight`<- slightT
+  SBUsample$`3.Low`<- lowT
+  ProbSamp <- merge(ProbSamp,SBUsample,all=TRUE)
+  rm(list = c('SBUsample','sample','highT','slightT','lowT'))
+}
+rm(list = c('i','nsamples','samples','SBU1'))
+
+ProbSampWAVE<-ProbSamp
+rm(ProbSamp)
+```
+```{r, echo=FALSE}
+#plot these values
+plot(ProbSampWAVE$bap,ProbSampWAVE$`1.High`,type="p",lwd=4,col="deeppink1",main="All WAVE Families",xlab="BAP Score",ylab="Probability")
+#lines(ProbSamp$bap,ProbSamp$`2.Slight`,lwd=4,col="darkmagenta",type="p")
+lines(ProbSampWAVE$bap,ProbSampWAVE$`3.Low`,lwd=4,col="blue3",type="p")
+abline(v=c(7.5,5,2.5))
+abline(h=c(0.5,.95))
+```
+
+###All Families
+Perform the above calculation for All the families, including families not on the WAVE list 
+```{r, echo=FALSE}
+#Pull bug names from the table
+WAVE <- read.csv("data/All.Families.csv")
+#convert the names to characters
+WAVE$Family <- as.character(WAVE$Family)
+WAVE$GENSPECIES <- as.character(WAVE$GENSPECIES)
+names(WAVE)[names(WAVE)=="GENSPECIES"]<- "genspecies"
+WAVE$genspecies<-toupper(WAVE$genspecies)
+
+#Create a file with the WAVE Organisms Named
+#this will remove organisms that aren't on the WAVE Families list
+SBU1 <- merge(SBU,WAVE,by=c("genspecies"))
+#remove WAVE column
+keep <- c("sample_id","coll_date","bap","genspecies","Family")
+SBU1 <- SBU1[keep]
+rm(keep)
+#rename Family column WAVE column
+names(SBU1)[names(SBU1)=="Family"]<-"WAVE"
+#Convert the family names to characters
+SBU1$WAVE <- as.character(SBU1$WAVE)
+#Produces a SBU1 file with no duplicate WAVE families per sample. This is necessary because there may be more than one species of a given family in the sample
+SBU1 <- unique(SBU1[c("sample_id","coll_date","bap","WAVE")])
+rm(WAVE)
+
+#Create impact column
+SBU1$impact <- "0"
+SBU1$impact <- ifelse(SBU1$bap<5,"3.Low",SBU1$impact)
+SBU1$impact <- ifelse(SBU1$bap>=7.5,"1.High",SBU1$impact)
+SBU1$impact <- ifelse(SBU1$impact==0,"2.Slight",SBU1$impact)
+
+#Create WAVE.Family Frequencies
+#first count the frequency of each combination
+SBUFreq <- count(SBU1[c("WAVE","impact")])
+#now restructure the table
+SBUFreq<-melt(SBUFreq,id=c("WAVE","impact"))
+SBUFreq <- cast(SBUFreq,WAVE~impact,sum)
+
+#Get total values for each impact
+junk <- unique(SBU1[c("sample_id","coll_date","impact")])
+total <- count(junk,c("impact"))
+rm(junk)
+high <- total$freq[1]
+slight <- total$freq[2]
+low <- total$freq[3]
+rm(total)
+
+#Create probability tables
+SBUProb <- SBUFreq
+SBUProb$`1.High` <- SBUFreq$`1.High`/high
+SBUProb$`2.Slight` <- SBUFreq$`2.Slight`/slight
+SBUProb$`3.Low` <- SBUFreq$`3.Low`/low
+#convert NA values to 0
+SBUProb[is.na(SBUProb)]<- 0
+rm(list = c('high','low','slight'))
+
+#merge the SBU and SBUProb tables
+SBU1 <- merge(SBU1,SBUProb,by=c("WAVE"))
+rm(list = c('SBUProb','SBUFreq'))
+
+#Confirm that there's only one sample per site
+junk1 <- unique(SBU1[c("sample_id")])
+junk2 <- unique(SBU1[c("sample_id","coll_date")])
+"these values should be the same. If not, then there are more than one sample per site"
+nrow(junk1)
+nrow(junk2)
+rm(list = c('junk1','junk2'))
+
+#calculate the prob of high, slight, low for each sample 
+#find out how many samples I have to run
+samples = unique(SBU1$sample_id)
+nsamples <- length(samples)
+
+#for the first sample
+sample = SBU1$sample_id==samples[1]
+SBUsample <- SBU1[sample,]
+SBUsample$`1.High`<- prod(SBUsample$`1.High`)
+SBUsample$`2.Slight`<- prod(SBUsample$`2.Slight`)
+SBUsample$`3.Low`<- prod(SBUsample$`3.Low`)
+SBUsample <- unique(SBUsample[c("sample_id","coll_date","bap","impact","1.High","2.Slight","3.Low")])
+highT <- SBUsample$`1.High`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+slightT <- SBUsample$`2.Slight`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+lowT <- SBUsample$`3.Low`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+SBUsample$`1.High`<- highT
+SBUsample$`2.Slight`<- slightT
+SBUsample$`3.Low`<- lowT
+ProbSamp <- SBUsample
+rm(list = c('SBUsample','sample','highT','slightT','lowT'))
+
+
+#and now for all subsequent samples
+for(i in 2:nsamples){
+  sample = SBU1$sample_id==samples[i]
+  SBUsample <- SBU1[sample,]
+  SBUsample$`1.High`<- prod(SBUsample$`1.High`)
+  SBUsample$`2.Slight`<- prod(SBUsample$`2.Slight`)
+  SBUsample$`3.Low`<- prod(SBUsample$`3.Low`)
+  SBUsample <- unique(SBUsample[c("sample_id","coll_date","bap","impact","1.High","2.Slight","3.Low")])
+  highT <- SBUsample$`1.High`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  slightT <- SBUsample$`2.Slight`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  lowT <- SBUsample$`3.Low`/(SBUsample$`1.High`+SBUsample$`2.Slight`+SBUsample$`3.Low`)
+  SBUsample$`1.High`<- highT
+  SBUsample$`2.Slight`<- slightT
+  SBUsample$`3.Low`<- lowT
+  ProbSamp <- merge(ProbSamp,SBUsample,all=TRUE)
+  rm(list = c('SBUsample','sample','highT','slightT','lowT'))
+}
+rm(list = c('i','nsamples','samples','SBU1'))
+
+#rename ProbSamp so can distinguish it from the ProbSampWave for summary stats below
+ProbSampAll<-ProbSamp
+rm(ProbSamp)
+```
+
+```{r, echo=FALSE}
+#plot these values
+plot(ProbSampAll$bap,ProbSampAll$`1.High`,type="p",lwd=4,col="deeppink1",main="All Families",xlab="BAP Score",ylab="Probability")
+#lines(ProbSamp$bap,ProbSamp$`2.Slight`,lwd=4,col="darkmagenta",type="p")
+lines(ProbSampAll$bap,ProbSampAll$`3.Low`,lwd=4,col="blue3",type="p")
+abline(v=c(7.5,5,2.5))
+abline(h=c(0.5,.95))
+```
+
+###Comparison of methods  
+
+PN	The % of all the nonimpacted samples with a probability > the Cutoff   
+EN	The % of all the impaired or slight samples inaccurately identified as nonimpacted by this method   
+ENI	The % of all the impaired samples (allowing errors in slight) inaccurately identified as nonimpacted  
+PI	The % of all the impaired samples captured with a probability > the Cutoff   
+EI	The % of sites identified as impaired that are actually slight or non impacted  
+CutOff  The sample is restricted to only records with probabilities at least of this value
+
+```{r, echo=FALSE}
+#p>10
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.1,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.1,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.1,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.1,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.1,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.1,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.1,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.1,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.1,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.1,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.1,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.1,])),2))*100
+CutOff<-"10"
+summary = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW'))
+
+#p>40
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.2,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.2,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.2,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.2,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.2,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.2,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.2,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.2,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.2,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.2,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.2,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.2,])),2))*100
+CutOff<-"20"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>40
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.3,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.3,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.3,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.3,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.3,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.3,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.3,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.3,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.3,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.3,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.3,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.3,])),2))*100
+CutOff<-"30"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>40
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>.4,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>.4,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>.4,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>.4,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.4,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.4,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>.4,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>.4,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>.4,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>.4,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>.4,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.4,])),2))*100
+CutOff<-"40"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>50
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.5,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.5,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.5,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.5,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.5,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.5,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.5,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.5,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.5,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.5,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.5,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.5,])),2))*100
+CutOff<-"50"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>60
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.6,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.6,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.6,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.6,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.6,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.6,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.6,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.6,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.6,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.6,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.6,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.6,])),2))*100
+CutOff<-"60"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>70
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.7,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.7,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.7,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.7,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.7,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.7,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.7,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.7,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.7,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.7,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.7,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.7,])),2))*100
+CutOff<-"70"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>80
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.8,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.8,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.8,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.8,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.8,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.8,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.8,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.8,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.8,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.8,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.8,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.8,])),2))*100
+CutOff<-"80"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>90
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.9,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.9,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.9,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.9,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.9,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.9,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.9,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.9,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.9,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.9,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.9,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.9,])),2))*100
+CutOff<-"90"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>95
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.95,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.95,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.95,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.95,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.95,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.95,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.95,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.95,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.95,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.95,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.95,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.95,])),2))*100
+CutOff<-"95"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>96
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.96,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.96,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.96,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.96,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.961,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.96,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.96,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.96,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.96,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.96,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.96,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.96,])),2))*100
+CutOff<-"96"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>97
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.97,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.97,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.97,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.97,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.97,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.97,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.97,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.97,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.97,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.97,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.97,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.97,])),2))*100
+CutOff<-"97"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#p>98
+PN<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='1.High'&ProbSampAll$`1.High`>0.98,]))/(nrow(ProbSampAll[ProbSampAll$impact=='1.High',])),2))*100
+EN<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='1.High'&ProbSampAll$`1.High`>0.98,]))/(nrow(ProbSampAll[ProbSampAll$impact!='1.High',])),2))*100
+ENI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`1.High`>0.98,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+PI<-(signif((nrow(ProbSampAll[ProbSampAll$impact=='3.Low'&ProbSampAll$`3.Low`>0.98,]))/(nrow(ProbSampAll[ProbSampAll$impact=='3.Low',])),2))*100
+EI<-(signif((nrow(ProbSampAll[ProbSampAll$impact!='3.Low'&ProbSampAll$`3.Low`>0.98,]))/(nrow(ProbSampAll[ProbSampAll$`3.Low`>0.98,])),2))*100
+PNW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High'&ProbSampWAVE$`1.High`>0.98,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='1.High',])),2))*100
+ENW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High'&ProbSampWAVE$`1.High`>0.98,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact!='1.High',])),2))*100
+ENIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`1.High`>0.98,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+PIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low'&ProbSampWAVE$`3.Low`>0.98,]))/(nrow(ProbSampWAVE[ProbSampWAVE$impact=='3.Low',])),2))*100
+EIW<-(signif((nrow(ProbSampWAVE[ProbSampWAVE$impact!='3.Low'&ProbSampWAVE$`3.Low`>0.98,]))/(nrow(ProbSampWAVE[ProbSampWAVE$`3.Low`>0.98,])),2))*100
+CutOff<-"98"
+junk = data.frame(CutOff,PN,EN,ENI,PI,EI,PNW,ENW,ENIW,PIW,EIW)
+summary<-merge(summary,junk,all=TRUE)
+rm(list = c('PN','EN','ENI','PI','EI','CutOff','PNW','ENW','ENIW','PIW','EIW','junk'))
+
+#remove W from the wave column headers
+names(summary)[names(summary)=="PNW"]<- "PN"
+names(summary)[names(summary)=="ENW"]<- "EN"
+names(summary)[names(summary)=="ENIW"]<- "ENI"
+names(summary)[names(summary)=="PIW"]<- "PI"
+names(summary)[names(summary)=="EIW"]<- "EI"
+
+
+#print the table
+kable(summary) %>%
+  kable_styling(c("striped", "bordered")) %>%
+    add_header_above(c(" ", "All Families" = 5, "WAVE Families Only" = 5))
+
+rm(summary)
+```
+
+Comparison Plot  
+```{r, echo=FALSE}
+#round the BAP scores to the nearest 0.5 while keeping the original file to print later
+Rounded <- Combined
+Rounded[,"bap"]= round(Rounded[,"bap"]/.5)*.5
+
+RoundedAll<-ProbSampAll
+RoundedAll[,"bap"]= round(RoundedAll[,"bap"]/.5)*.5
+
+RoundedWAVE<-ProbSampWAVE
+RoundedWAVE[,"bap"]= round(RoundedWAVE[,"bap"]/.5)*.5
+
+
+#create categories for plotting
+All<-count(Rounded[c("bap")])
+A10H<-count((RoundedAll[RoundedAll$`1.High`>0.10,])[c("bap")])
+A10L<-count((RoundedAll[RoundedAll$`3.Low`>0.10,])[c("bap")])
+W10H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.10,])[c("bap")])
+W10L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.10,])[c("bap")])
+A20H<-count((RoundedAll[RoundedAll$`1.High`>0.20,])[c("bap")])
+A20L<-count((RoundedAll[RoundedAll$`3.Low`>0.20,])[c("bap")])
+W20H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.20,])[c("bap")])
+W20L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.20,])[c("bap")])
+A30H<-count((RoundedAll[RoundedAll$`1.High`>0.30,])[c("bap")])
+A30L<-count((RoundedAll[RoundedAll$`3.Low`>0.30,])[c("bap")])
+W30H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.30,])[c("bap")])
+W30L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.30,])[c("bap")])
+A40H<-count((RoundedAll[RoundedAll$`1.High`>0.40,])[c("bap")])
+A40L<-count((RoundedAll[RoundedAll$`3.Low`>0.40,])[c("bap")])
+W40H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.40,])[c("bap")])
+W40L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.40,])[c("bap")])
+A50H<-count((RoundedAll[RoundedAll$`1.High`>0.50,])[c("bap")])
+A50L<-count((RoundedAll[RoundedAll$`3.Low`>0.50,])[c("bap")])
+W50H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.50,])[c("bap")])
+W50L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.50,])[c("bap")])
+A60H<-count((RoundedAll[RoundedAll$`1.High`>0.60,])[c("bap")])
+A60L<-count((RoundedAll[RoundedAll$`3.Low`>0.60,])[c("bap")])
+W60H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.60,])[c("bap")])
+W60L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.60,])[c("bap")])
+A70H<-count((RoundedAll[RoundedAll$`1.High`>0.70,])[c("bap")])
+A70L<-count((RoundedAll[RoundedAll$`3.Low`>0.70,])[c("bap")])
+W70H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.70,])[c("bap")])
+W70L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.70,])[c("bap")])
+A80H<-count((RoundedAll[RoundedAll$`1.High`>0.80,])[c("bap")])
+A80L<-count((RoundedAll[RoundedAll$`3.Low`>0.80,])[c("bap")])
+W80H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.80,])[c("bap")])
+W80L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.80,])[c("bap")])
+A90H<-count((RoundedAll[RoundedAll$`1.High`>0.90,])[c("bap")])
+A90L<-count((RoundedAll[RoundedAll$`3.Low`>0.90,])[c("bap")])
+W90H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.90,])[c("bap")])
+W90L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.90,])[c("bap")])
+A95H<-count((RoundedAll[RoundedAll$`1.High`>0.95,])[c("bap")])
+A95L<-count((RoundedAll[RoundedAll$`3.Low`>0.95,])[c("bap")])
+W95H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.95,])[c("bap")])
+W95L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.95,])[c("bap")])
+A96H<-count((RoundedAll[RoundedAll$`1.High`>0.96,])[c("bap")])
+A96L<-count((RoundedAll[RoundedAll$`3.Low`>0.96,])[c("bap")])
+W96H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.96,])[c("bap")])
+W96L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.96,])[c("bap")])
+A97H<-count((RoundedAll[RoundedAll$`1.High`>0.97,])[c("bap")])
+A97L<-count((RoundedAll[RoundedAll$`3.Low`>0.97,])[c("bap")])
+W97H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.97,])[c("bap")])
+W97L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.97,])[c("bap")])
+A98H<-count((RoundedAll[RoundedAll$`1.High`>0.98,])[c("bap")])
+A98L<-count((RoundedAll[RoundedAll$`3.Low`>0.98,])[c("bap")])
+W98H<-count((RoundedWAVE[RoundedWAVE$`1.High`>0.98,])[c("bap")])
+W98L<-count((RoundedWAVE[RoundedWAVE$`3.Low`>0.98,])[c("bap")])
+
+
+#create one plot to rule them all with vertical lines for the impact categories
+plot(All$bap,All$freq,type="l",lwd=4,xlab="BAP Score",ylab="Number of Sites",main="All Families")
+#lines(A10H$bap,A10H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A10L$bap,A10L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A20H$bap,A20H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A20L$bap,A20L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A30H$bap,A30H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A30L$bap,A30L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A40H$bap,A40H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A40L$bap,A40L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A50H$bap,A50H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A50L$bap,A50L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A60H$bap,A60H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A60L$bap,A60L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A70H$bap,A70H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A70L$bap,A70L$freq,lwd=4,col="firebrick1",type="l")
+#lines(A80H$bap,A80H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A80L$bap,A80L$freq,lwd=4,col="firebrick1",type="l")
+lines(A90H$bap,A90H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A90L$bap,A90L$freq,lwd=4,col="firebrick1",type="l")
+lines(A95H$bap,A95H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A95L$bap,A95L$freq,lwd=4,col="firebrick1",type="l")
+lines(A96H$bap,A96H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A96L$bap,A96L$freq,lwd=4,col="firebrick1",type="l")
+lines(A97H$bap,A97H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A97L$bap,A97L$freq,lwd=4,col="firebrick1",type="l")
+lines(A98H$bap,A98H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(A98L$bap,A98L$freq,lwd=4,col="firebrick1",type="l")
+abline(v=7.5)
+abline(v=5)
+abline(v=2.5)
+legend("topleft",lty=1,legend=c("All Sites","90,95,96,97,98 prob of non impacted","20,30,40,50,60,70,80 prob of impaired"),lwd=c(2,2,2),col=c("black","dodgerblue1","firebrick1"))
+
+#create one plot to rule them all with vertical lines for the impact categories
+plot(All$bap,All$freq,type="l",lwd=4,xlab="BAP Score",ylab="Number of Sites",main="All WAVE Families")
+#lines(W10H$bap,W10H$freq,lwd=4,col="dodgerblue1",type="l")
+#lines(W10L$bap,W10L$freq,lwd=4,col="firebrick1",type="l")
+#lines(W20H$bap,W20H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W20L$bap,W20L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W30H$bap,W30H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W30L$bap,W30L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W40H$bap,W40H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W40L$bap,W40L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W50H$bap,W50H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W50L$bap,W50L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W60H$bap,W60H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W60L$bap,W60L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W70H$bap,W70H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W70L$bap,W70L$freq,lwd=4,col="firebrick3",type="l")
+#lines(W80H$bap,W80H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W80L$bap,W80L$freq,lwd=4,col="firebrick3",type="l")
+lines(W90H$bap,W90H$freq,lwd=4,col="dodgerblue4",type="l")
+#lines(W90L$bap,W90L$freq,lwd=4,col="firebrick1",type="l")
+lines(W95H$bap,W95H$freq,lwd=4,col="dodgerblue4",type="l")
+#lines(W95L$bap,W95L$freq,lwd=4,col="firebrick1",type="l")
+lines(W96H$bap,W96H$freq,lwd=4,col="dodgerblue4",type="l")
+#lines(W96L$bap,W96L$freq,lwd=4,col="firebrick1",type="l")
+lines(W97H$bap,W97H$freq,lwd=4,col="dodgerblue4",type="l")
+#lines(W97L$bap,W97L$freq,lwd=4,col="firebrick1",type="l")
+lines(W98H$bap,W98H$freq,lwd=4,col="dodgerblue4",type="l")
+#lines(W98L$bap,W98L$freq,lwd=4,col="firebrick1",type="l")
+abline(v=7.5)
+abline(v=5)
+abline(v=2.5)
+legend("topleft",lty=1,legend=c("All Sites","90,95,96,97,98 prob of non impacted","20,30,40,50,60,70,80 prob of impaired"),lwd=c(2,2,2),col=c("black","dodgerblue1","firebrick1"))
+
+#plot both probabilistic methods together
+#create one plot to rule them all with vertical lines for the impact categories
+plot(All$bap,All$freq,type="l",lwd=4,xlab="BAP Score",ylab="Number of Sites",main="Both Probabilistic Methods")
+lines(A20L$bap,A20L$freq,lwd=4,col="firebrick1",type="l")
+lines(A30L$bap,A30L$freq,lwd=4,col="firebrick1",type="l")
+lines(A40L$bap,A40L$freq,lwd=4,col="firebrick1",type="l")
+lines(A50L$bap,A50L$freq,lwd=4,col="firebrick1",type="l")
+lines(A60L$bap,A60L$freq,lwd=4,col="firebrick1",type="l")
+lines(A70L$bap,A70L$freq,lwd=4,col="firebrick1",type="l")
+lines(A80L$bap,A80L$freq,lwd=4,col="firebrick1",type="l")
+lines(A90H$bap,A90H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A95H$bap,A95H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A96H$bap,A96H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A97H$bap,A97H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A98H$bap,A98H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W20L$bap,W20L$freq,lwd=4,col="firebrick3",type="l")
+lines(W30L$bap,W30L$freq,lwd=4,col="firebrick3",type="l")
+lines(W40L$bap,W40L$freq,lwd=4,col="firebrick3",type="l")
+lines(W50L$bap,W50L$freq,lwd=4,col="firebrick3",type="l")
+lines(W60L$bap,W60L$freq,lwd=4,col="firebrick3",type="l")
+lines(W70L$bap,W70L$freq,lwd=4,col="firebrick3",type="l")
+lines(W80L$bap,W80L$freq,lwd=4,col="firebrick3",type="l")
+lines(W90H$bap,W90H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W95H$bap,W95H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W96H$bap,W96H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W97H$bap,W97H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W98H$bap,W98H$freq,lwd=4,col="dodgerblue4",type="l")
+abline(v=7.5)
+abline(v=5)
+abline(v=2.5)
+legend("topleft",lty=1,legend=c("All Sites","All 90,95,96,97,98 prob of non impacted","All 20,30,40,50,60,70,80 prob of impaired","WAVE 90,95,96,97,98 prob of non impacted","WAVE 20,30,40,50,60,70,80 prob of impaired"),lwd=c(2,2,2),col=c("black","dodgerblue1","firebrick1","dodgerblue4","firebrick3"))
+
+
+#create one plot to rule them all with vertical lines for the impact categories
+plot(All$bap,All$freq,type="l",lwd=4,xlab="BAP Score",ylab="Number of Sites",main="All methods combined")
+lines(A20L$bap,A20L$freq,lwd=4,col="firebrick1",type="l")
+lines(A30L$bap,A30L$freq,lwd=4,col="firebrick1",type="l")
+lines(A40L$bap,A40L$freq,lwd=4,col="firebrick1",type="l")
+lines(A50L$bap,A50L$freq,lwd=4,col="firebrick1",type="l")
+lines(A60L$bap,A60L$freq,lwd=4,col="firebrick1",type="l")
+lines(A70L$bap,A70L$freq,lwd=4,col="firebrick1",type="l")
+lines(A80L$bap,A80L$freq,lwd=4,col="firebrick1",type="l")
+lines(A90H$bap,A90H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A95H$bap,A95H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A96H$bap,A96H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A97H$bap,A97H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(A98H$bap,A98H$freq,lwd=4,col="dodgerblue1",type="l")
+lines(W20L$bap,W20L$freq,lwd=4,col="firebrick3",type="l")
+lines(W30L$bap,W30L$freq,lwd=4,col="firebrick3",type="l")
+lines(W40L$bap,W40L$freq,lwd=4,col="firebrick3",type="l")
+lines(W50L$bap,W50L$freq,lwd=4,col="firebrick3",type="l")
+lines(W60L$bap,W60L$freq,lwd=4,col="firebrick3",type="l")
+lines(W70L$bap,W70L$freq,lwd=4,col="firebrick3",type="l")
+lines(W80L$bap,W80L$freq,lwd=4,col="firebrick3",type="l")
+lines(W90H$bap,W90H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W95H$bap,W95H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W96H$bap,W96H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W97H$bap,W97H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(W98H$bap,W98H$freq,lwd=4,col="dodgerblue4",type="l")
+lines(Most6Plot$bap,Most6Plot$freq,lwd=4,col="gray0",type="l")
+lines(Most7Plot$bap,Most7Plot$freq,lwd=4,col="gray0",type="l")
+lines(Most8Plot$bap,Most8Plot$freq,lwd=4,col="gray0",type="l")
+lines(Most9Plot$bap,Most9Plot$freq,lwd=4,col="gray0",type="l")
+lines(Most10Plot$bap,Most10Plot$freq,lwd=4,col="gray0",type="l")
+lines(Least3Plot$bap,Least3Plot$freq,lwd=4,col="gray",type="l")
+lines(Least4Plot$bap,Least4Plot$freq,lwd=4,col="gray",type="l")
+lines(Least5Plot$bap,Least5Plot$freq,lwd=4,col="gray",type="l")
+abline(v=7.5)
+abline(v=5)
+abline(v=2.5)
+legend("topleft",lty=1,legend=c("All Sites","All 90,95,96,97,98 prob of non impacted","All 20,30,40,50,60,70,80 prob of impaired","WAVE 90,95,96,97,98 prob of non impacted","WAVE 20,30,40,50,60,70,80 prob of impaired",">5 to >10 Most",">3 to >5 Least"),lwd=c(2,2,2),col=c("black","dodgerblue1","firebrick1","dodgerblue4","firebrick3","gray0","gray"))
+
+rm(list = c('All','W98L','W98H','W97L','W97H','W96L','W96H','W95L','W95H','W90L','W90H','W80L','W80H','W70L','W70H','W60L','W60H','W50L','W50H','W40L','W40H','W30L','W30H','W20L','W20H','W10L','W10H','A98L','A98H','A97L','A97H','A96L','A96H','A95L','A95H','A90L','A90H','A80L','A80H','A70L','A70H','A60L','A60H','A50L','A50H','A40L','A40H','A30L','A30H','A20L','A20H','A10L','A10H','RoundedAll','RoundedWAVE'))
+rm(list = c('AllPlot','Most5Plot','Most6Plot','Most7Plot','Most8Plot','Most9Plot','Most10Plot','Least5Plot','Least4Plot','Least3Plot','Rounded'))
+```

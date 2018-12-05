@@ -1,0 +1,79 @@
+---
+title: "10.formattin.data"
+author: "Alene Onion"
+date: "October 15, 2018"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+---
+
+Read Species, Sites, and Metrics tables which were copied from the SBU database on 10/15/2018  
+```{r, echo=FALSE}
+species<-read.csv("data/Species.csv")
+sites<-read.csv("data/Sites.csv")
+metrics<-read.csv("data/metrics.csv")
+```
+
+Restrict to multiplate/kick samples, collected in sampling period, and only one result per site  
+```{r, echo=FALSE}
+#Convert dates to date values
+metrics$DATE <- as.Date(metrics$DATE,"%m/%d/%Y")
+#Create a new column for sampling month
+metrics$month <- format(metrics$DATE,"%m")
+
+#pull records where month is between 7-9
+mon = metrics$month == "07" | metrics$month == "08" | metrics$month == "09"
+metrics <- metrics[mon,]
+rm(mon)
+
+#restricting to only multiplate and kick samples
+sample = metrics$COLLECT=="1"|metrics$COLLECT=="2"|metrics$COLLECT=="5"|metrics$COLLECT=="3"
+metrics<-metrics[sample,]
+rm(sample)
+
+#restricting to only one replicate
+metrics<-metrics[metrics$REPLICATE=="1",]
+
+#add stream name and lat/lon to the metrics table
+sites$SITE_ID <- paste(sites$BASIN,"-",sites$LOCATION,"-",sites$RIVMILE,sep="")
+sites<-unique(sites[c("SITE_ID","NAME","LATITUDE","LONGITUDE")])
+
+metrics$SITE_ID<-paste(metrics$BASIN,"-",metrics$LOCATION,"-",metrics$RIVMILE,sep="")
+data<-merge(metrics,sites,all=FALSE)
+rm(list=c("metrics","sites"))
+
+#Remove NA values
+data <- data[!is.na(data$DATE),]
+data<-unique(data[c("NAME","SITE_ID","LATITUDE","LONGITUDE","DATE","REPLICATE","COLLECT","FINAL_SCORE")])
+
+#rename final score to BAP
+names(data)[names(data)=="FINAL_SCORE"]<-"bap"
+
+#pull only the most recent date
+data1<-aggregate(data$DATE,by=list(data$SITE_ID),max)
+names(data1)[names(data1)=="Group.1"]<-"SITE_ID"
+names(data1)[names(data1)=="x"]<-"DATE"
+data<-merge(data1,data,by=c("SITE_ID","DATE"),all=FALSE)
+rm(data1)
+
+#modify species table for merge
+species$SITE_ID<-paste(species$BASIN,"-",species$LOCATION,"-",species$RIVMILE,sep="")
+species$DATE <- as.Date(species$COLL_DATE,"%m/%d/%Y")
+species<-unique(species[c("SITE_ID","DATE","COLLECT","REPLICATE","MACRO_GENSPECIES")])
+
+#merge the tables
+data<-merge(data,species,by=c("SITE_ID","DATE","COLLECT","REPLICATE"),all=FALSE)
+rm(species)
+data<-unique(data[c("SITE_ID","DATE","MACRO_GENSPECIES","bap")])
+data$WAVE<-NA
+
+#rename column headers to match expected
+names(data)[names(data)=="SITE_ID"]<-"sample_id"
+names(data)[names(data)=="DATE"]<-"coll_date"
+names(data)[names(data)=="MACRO_GENSPECIES"]<-"genspecies"
+
+SBU<-data
+rm(data)
+```
