@@ -1,0 +1,70 @@
+---
+title: "Summarizing.Metric"
+author: "Alene Onion"
+date: "October 15, 2018"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#file.copy("sections/images", ".", recursive = TRUE)
+```
+
+##Calculation  
+
+ We will be using naive Bayes: the assumption of conditioanl independence
+ (even when we know the data aren't conditionally independent)
+
+ The formula for this calculation is: 
+ 
+ P((bap>=7.5)|WAVE families in the sample) =
+
+(P(bap>=7.5)P(Family_1|(bap>=7.5))P(Family_2|(bap>=7.5))...etc)  
+/  
+(P(bap>=7.5)P(Family_1|(bap>=7.5))...etc + P(5<bap<7.5)P(Family_1|(5<bap<7.5))...etc + P(bap<5)P(Family_1|(bap<5))...etc)  
+
+
+##Pulling Raw Data  
+Data used for this project includes all SBU samples collected since 1990 and reformatted so it meets these criteria:  
+- Only 1 sample per site  
+- Only the most recent assessment  
+- Only kick sampling method  
+- only collected between July and September    
+```{r, child = 'sections/00.formatting.data.Rmd'}
+
+```
+
+
+##Most Least Wanted Distribution Graph  
+
+This script takes a file of all SBU kick samples since 1990 and identifies the number of WAVE Least Wanteds and WAVE Most Wanteds in each sample  
+
+It then plots all the BAP scores as well as those with more than 5,6,7,8,9,and10 most wanteds as well as those with more than 3,4,and 5 Least Wanteds   
+```{r, child = 'sections/01.Least.Most.Counts.Rmd'}
+
+```
+
+##Calculating Baes Probability  
+
+
+```{r, child = 'sections/10.Calculating.Baes.Probability.Rmd'}
+
+```
+
+##Conclusions thus far  
+This graph shows that the probabilities calcualted by using only WAVE families capture slightly fewer Non-Impacted sites and slightly more impaired sites.  
+The probability based method doesn't fare particularly better at capturing Non Impacted sites compared to the Most Wanted method. Since the latter is easier for the public to understand, I feel it's worth sticking with this method.  
+
+The opposite is true for impaired sites. The probability based method is better at capturing impaired sites with a lower error rate. Since this method is used to red flag sites for professional investigation, I feel it's ok to use this method even though it may be more confusing to the public.  
+
+I feel these are the best methods for WAVE moving forward:  
+6 or more Most Wanteds will capture 76% of the Non-Impacted sites and 0% of impaired sites. It's important to understand that it will erroneously identify slightly impacted sites as non-impacted. We have decided that's an acceptable error since the regulatory response is only triggered by the impaired category.  We should consider relabeling this result as Non-Impaired rather than Non-Impacted.  
+
+Samples with a 20% or greater probability of being impaired should be red flagged for follow up investigation by NYSDEC. This will capture 78% of the impaired locations withonly a 9% error rate. That means almost 1/10 sites flagged by this process won't actually be impaired. I feel this is an acceptable level of error especially considering we can do desktop investigations to see if this site actually deserves further investigation.  
+
+
+Next we would like to examine using the Baes calculation on pair frequencies.
